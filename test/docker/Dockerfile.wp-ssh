@@ -1,0 +1,19 @@
+FROM wordpress:6.7-php8.2-apache
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssh-server \
+    less \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo 'root:migration' | chpasswd \
+    && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config \
+    && echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config \
+    && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config \
+    && echo 'UseDNS no' >> /etc/ssh/sshd_config \
+    && mkdir -p /var/run/sshd
+
+COPY entrypoint.sh /usr/local/bin/wp-entrypoint.sh
+RUN chmod +x /usr/local/bin/wp-entrypoint.sh
+
+ENTRYPOINT ["wp-entrypoint.sh"]
+CMD ["apache2-foreground"]

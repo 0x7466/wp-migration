@@ -1,0 +1,84 @@
+services:
+  # ── Source WordPress ──────────────────────────────
+  source-db:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: wp_source
+      MYSQL_USER: wp_user
+      MYSQL_PASSWORD: wp_pass
+    ports:
+      - "3309:3306"
+    networks:
+      - wp-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 10s
+      retries: 30
+
+  source-wp:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.wp-ssh
+    depends_on:
+      source-db:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: source-db
+      WORDPRESS_DB_USER: wp_user
+      WORDPRESS_DB_PASSWORD: wp_pass
+      WORDPRESS_DB_NAME: wp_source
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME', 'http://localhost:8084');
+        define('WP_SITEURL', 'http://localhost:8084');
+    ports:
+      - "8084:80"
+      - "2224:22"
+    volumes:
+      - ./wp-source:/var/www/html
+    networks:
+      - wp-net
+
+  # ── Target WordPress ──────────────────────────────
+  target-db:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: wp_target
+      MYSQL_USER: wp_user
+      MYSQL_PASSWORD: wp_pass
+    ports:
+      - "3310:3306"
+    networks:
+      - wp-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 10s
+      retries: 30
+
+  target-wp:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.wp-ssh
+    depends_on:
+      target-db:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: target-db
+      WORDPRESS_DB_USER: wp_user
+      WORDPRESS_DB_PASSWORD: wp_pass
+      WORDPRESS_DB_NAME: wp_target
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME', 'http://localhost:8085');
+        define('WP_SITEURL', 'http://localhost:8085');
+    ports:
+      - "8085:80"
+      - "2225:22"
+    volumes:
+      - ./wp-target:/var/www/html
+    networks:
+      - wp-net
+
+networks:
+  wp-net:
+    driver: bridge

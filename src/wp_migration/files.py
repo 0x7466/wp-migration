@@ -41,9 +41,30 @@ def _ensure_local_dir(path: str | Path) -> Path:
     return p
 
 
+def _walk_remote(conn: TransportConnection, remote_dir: str) -> list[tuple[str, str, bool]]:
+    """Recursively walk a remote directory.
+
+    Returns list of (remote_path, relative_path, is_dir).
+    """
+    results: list[tuple[str, str, bool]] = []
+    entries = conn.list(remote_dir)
+    for entry in entries:
+        if entry.startswith("."):
+            continue
+        remote_path = f"{remote_dir}/{entry}"
+        try:
+            sub = conn.list(remote_path)
+            results.append((remote_path, entry, True))
+            for sub_path, rel, is_d in _walk_remote(conn, remote_path):
+                results.append((sub_path, f"{entry}/{rel}", is_d))
+        except Exception:
+            results.append((remote_path, entry, False))
+    return results
+
+
 def transfer_files(
     source: TransportConnection,
-    target: TransportConnection,
+    target: Optional[TransportConnection],
     subdir: str,
     staging_dir: str,
     existing_checksums: dict[str, str],
@@ -55,31 +76,32 @@ def transfer_files(
     checksums: dict[str, str] = {}
 
     try:
-        filenames = source.list(remote_base)
+        files = _walk_remote(source, remote_base)
     except Exception:
-        filenames = []
+        files = []
 
-    for filename in filenames:
-        if filename.startswith("."):
+    for remote_path, rel_path, is_dir in files:
+        if is_dir:
+            _ensure_local_dir(local_base / rel_path)
             continue
-        remote_file = f"{remote_base}/{filename}"
-        local_file = local_base / filename
-        remote_target = f"{remote_wp_content}/{subdir}/{filename}" if remote_wp_content else f"/{subdir}/{filename}"
 
-        existing = existing_checksums.get(filename)
+        local_file = local_base / rel_path
+        existing = existing_checksums.get(rel_path)
         if existing and local_file.exists() and _checksum(local_file) == existing:
-            checksums[filename] = existing
+            checksums[rel_path] = existing
             continue
 
-        source.download(remote_file, str(local_file))
+        _ensure_local_dir(local_file.parent)
+        source.download(remote_path, str(local_file))
         cksum = _checksum(local_file)
-        checksums[filename] = cksum
+        checksums[rel_path] = cksum
 
-    # Now upload from staging to target
-    for filename in checksums:
-        local_file = Path(staging_dir) / subdir / filename
-        remote_dest = f"{remote_wp_content}/{subdir}/{filename}" if remote_wp_content else f"/{subdir}/{filename}"
-        target.upload(str(local_file), remote_dest)
+    # Upload from staging to target
+    if target is not None:
+        for rel_path in checksums:
+            local_file = local_base / rel_path
+            remote_dest = f"{remote_base}/{rel_path}"
+            target.upload(str(local_file), remote_dest)
 
     if progress:
         progress(len(checksums), len(checksums))

@@ -1,0 +1,33 @@
+source:
+  transport: sftp
+  host: 127.0.0.1
+  port: 2224
+  user: root
+  password: migration
+  remote_path: /var/www/html
+  mysql:
+    host: 127.0.0.1
+    port: 3309
+    user: wp_user
+    password: wp_pass
+    name: wp_source
+
+target:
+  transport: sftp
+  host: 127.0.0.1
+  port: 2225
+  user: root
+  password: migration
+  remote_path: /var/www/html
+  mysql:
+    host: 127.0.0.1
+    port: 3310
+    user: wp_user
+    password: wp_pass
+    name: wp_target
+  url: http://localhost:8085
+
+options:
+  wp_content_only: true
+  resume: true
+  dry_run: false
