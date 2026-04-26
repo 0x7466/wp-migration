@@ -181,15 +181,12 @@ def _do_export(cfg, tmpdir, dry_run):
     staging_dir = Path(tmpdir) / "staging"
     staging_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Resolve DB config
-    db_config = _resolve_source_db_config(cfg)
-    _log(f"Database: {db_config.user}@{db_config.host}:{db_config.port}/{db_config.name}")
-
-    # 2. Dump database with fallbacks
-    _step("Dumping source database")
     if cfg.options.skip_db:
         _log("Database dump skipped (options.skip_db = true)")
     else:
+        db_config = _resolve_source_db_config(cfg)
+        _log(f"Database: {db_config.user}@{db_config.host}:{db_config.port}/{db_config.name}")
+        _step("Dumping source database")
         _dump_with_fallback(cfg, db_config, dump_path)
         if dump_path.exists():
             size = len(dump_path.read_text())
