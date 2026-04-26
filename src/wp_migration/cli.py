@@ -153,6 +153,29 @@ def _read_remote_file(conn, remote_path):
     return content
 
 
+def _resolve_source_url(cfg) -> str | None:
+    if cfg.source.url:
+        return cfg.source.url
+    try:
+        conn = connect(
+            TransportProtocol(cfg.source.transport),
+            cfg.source.host,
+            cfg.source.port,
+            cfg.source.user,
+            password=cfg.source.password,
+            key_path=cfg.source.key_path,
+        )
+        try:
+            config_path = discover_wp_config(cfg.source.remote_path, conn)
+            raw = _read_remote_file(conn, config_path)
+            parsed = parse_wp_config(raw)
+            return parsed.get("WP_HOME") or parsed.get("WP_SITEURL") or None
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
 def _do_export(cfg, tmpdir, dry_run):
     dump_path = Path(tmpdir) / "dump.sql"
     staging_dir = Path(tmpdir) / "staging"
@@ -241,7 +264,7 @@ def _dump_with_fallback(cfg, db_config, dump_path):
             src_conn.close()
 
     # Layer 2b: PHP dump script
-    site_url = cfg.source.url
+    site_url = cfg.source.url or _resolve_source_url(cfg)
     if site_url:
         _log("Attempting PHP dump script upload...")
         src_conn = connect(
@@ -271,7 +294,7 @@ def _dump_with_fallback(cfg, db_config, dump_path):
     if site_url:
         _e("  - PHP dump script: failed")
     else:
-        _e("  - PHP dump script: not available (no source URL configured)")
+        _e("  - PHP dump script: not available (no source URL — set source.url in config, or add define('WP_HOME', '...') to wp-config.php)")
     _e("")
     _e("To export files only, add to config:  options:")
     _e("                                       skip_db: true")

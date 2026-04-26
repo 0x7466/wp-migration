@@ -148,6 +148,76 @@ class TestExportDbFallback:
         assert result.exit_code == 0
         remote_dump.assert_called_once()
 
+    def test_auto_detect_url_from_wp_config(self, mocker):
+        from wp_migration.cli import _resolve_source_url
+        from wp_migration.config import MigrationConfig, HostConfig, OptionsConfig
+
+        cfg = MigrationConfig(
+            source=HostConfig(
+                transport="sftp", host="host.com", port=22, user="u",
+                password="p", remote_path="/var/www",
+            ),
+            target=HostConfig(
+                transport="ftp", host="new.com", user="u",
+                password="p", remote_path="/www",
+            ),
+        )
+        mock_conn = mocker.MagicMock()
+        mocker.patch("wp_migration.cli.connect", return_value=mock_conn)
+        mocker.patch("wp_migration.cli.discover_wp_config", return_value="/var/www/wp-config.php")
+        mocker.patch("wp_migration.cli._read_remote_file", return_value="""<?php
+define('WP_HOME', 'http://example.com');
+define('WP_SITEURL', 'http://example.com/wp');
+""")
+        url = _resolve_source_url(cfg)
+        assert url == "http://example.com"
+
+    def test_auto_detect_url_falls_back_to_siteurl(self, mocker):
+        from wp_migration.cli import _resolve_source_url
+        from wp_migration.config import MigrationConfig, HostConfig, OptionsConfig
+
+        cfg = MigrationConfig(
+            source=HostConfig(
+                transport="sftp", host="host.com", port=22, user="u",
+                password="p", remote_path="/var/www",
+            ),
+            target=HostConfig(
+                transport="ftp", host="new.com", user="u",
+                password="p", remote_path="/www",
+            ),
+        )
+        mock_conn = mocker.MagicMock()
+        mocker.patch("wp_migration.cli.connect", return_value=mock_conn)
+        mocker.patch("wp_migration.cli.discover_wp_config", return_value="/var/www/wp-config.php")
+        mocker.patch("wp_migration.cli._read_remote_file", return_value="""<?php
+define('WP_SITEURL', 'http://example.com/wp');
+""")
+        url = _resolve_source_url(cfg)
+        assert url == "http://example.com/wp"
+
+    def test_auto_detect_url_returns_none_when_not_found(self, mocker):
+        from wp_migration.cli import _resolve_source_url
+        from wp_migration.config import MigrationConfig, HostConfig, OptionsConfig
+
+        cfg = MigrationConfig(
+            source=HostConfig(
+                transport="sftp", host="host.com", port=22, user="u",
+                password="p", remote_path="/var/www",
+            ),
+            target=HostConfig(
+                transport="ftp", host="new.com", user="u",
+                password="p", remote_path="/www",
+            ),
+        )
+        mock_conn = mocker.MagicMock()
+        mocker.patch("wp_migration.cli.connect", return_value=mock_conn)
+        mocker.patch("wp_migration.cli.discover_wp_config", return_value="/var/www/wp-config.php")
+        mocker.patch("wp_migration.cli._read_remote_file", return_value="""<?php
+define('DB_NAME', 'test');
+""")
+        url = _resolve_source_url(cfg)
+        assert url is None
+
     def test_ftp_fallback_to_php_dump(self, runner, tmp_path, mocker):
         import yaml
         from wp_migration.db import DatabaseError
