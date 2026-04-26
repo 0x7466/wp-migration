@@ -1,13 +1,26 @@
-import pytest
 import subprocess
 from pathlib import Path
+import pytest
+
 from wp_migration.db import dump_database, import_sql
 from wp_migration.replace import replace_in_sql
 from wp_migration.config import MySQLConfig
 
+
+def _docker_container_running(name):
+    try:
+        r = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", name],
+            capture_output=True, text=True, timeout=10,
+        )
+        return r.returncode == 0 and r.stdout.strip() == "true"
+    except Exception:
+        return False
+
+
 pytestmark = pytest.mark.skipif(
-    not Path("/var/run/docker.sock").exists(),
-    reason="Docker required for integration tests",
+    not _docker_container_running("wp_migrate_test"),
+    reason="Requires running Docker container 'wp_migrate_test' with MySQL",
 )
 
 SOURCE_DB = "wp_test"
