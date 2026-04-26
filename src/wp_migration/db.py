@@ -245,6 +245,7 @@ def _import_via_mysql(config: MySQLConfig, mysql: str, dump_path: Path) -> None:
         f"--host={config.host}",
         f"--port={config.port}",
         f"--user={config.user}",
+        "--init-command=SET SESSION sql_mode = ''",
         config.name,
     ]
 
@@ -274,6 +275,7 @@ def _import_via_pymysql(config: MySQLConfig, dump_path: Path) -> None:
     try:
         with conn, dump_path.open() as f:
             with conn.cursor() as cursor:
+                cursor.execute("SET SESSION sql_mode = ''")
                 statement = ""
                 for line in f:
                     stripped = line.strip()
