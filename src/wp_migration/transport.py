@@ -71,7 +71,8 @@ class FtpConnection(TransportConnection):
         parent = str(Path(remote_path).parent)
         name = Path(remote_path).name
         try:
-            return name in self._client.list(parent)
+            entries = self._client.list(parent)
+            return name in entries or f"/{name}" in entries or name.lstrip("/") in entries
         except Exception:
             return False
 
