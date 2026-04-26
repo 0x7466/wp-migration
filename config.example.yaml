@@ -1,0 +1,40 @@
+# Source host configuration
+source:
+  transport: sftp               # sftp | ftp | scp
+  host: old-server.example.com
+  port: 22                      # 22 for sftp/scp, 21 for ftp
+  user: your_username
+  password: your_password       # or use key_path instead
+  key_path: ~/.ssh/id_rsa       # optional, for sftp/scp
+  remote_path: /var/www/wordpress
+  mysql_override:               # optional — auto-detected from wp-config.php
+    host: db.example.com
+    port: 3306
+    user: db_user
+    password: db_password
+    name: db_name
+
+# Target host configuration
+target:
+  transport: ftp
+  host: new-server.example.com
+  port: 21
+  user: deploy_user
+  password: deploy_password
+  remote_path: /public_html
+  mysql:
+    host: mysql.newserver.com
+    port: 3306
+    user: new_db_user
+    password: new_db_pass
+    name: new_wp_db
+  url: https://newsite.com      # target site URL for search-replace
+
+# Migration options (all optional with defaults)
+options:
+  wp_content_only: true         # skip WordPress core files
+  skip_uploads: false
+  skip_themes: false
+  skip_plugins: false
+  dry_run: false                # preview without making changes
+  resume: true                  # skip already-transferred files by checksum
