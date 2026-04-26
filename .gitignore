@@ -12,3 +12,10 @@ venv/
 *.zip
 .tmp/
 local/
+
+# WordPress test containers — generated files
+test/wp-source/*
+test/wp-target/*
+!test/wp-source/.gitkeep
+!test/wp-target/.gitkeep
+source-snapshot.sql
