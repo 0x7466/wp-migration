@@ -71,13 +71,21 @@ def _dump_via_pymysql(config: MySQLConfig, output_path: Path) -> Path:
                 tables = [row[0] for row in cursor.fetchall()]
 
             for table in tables:
+                # Dump CREATE TABLE
+                with conn.cursor() as cursor:
+                    cursor.execute(f"SHOW CREATE TABLE `{table}`")
+                    row = cursor.fetchone()
+                    if row:
+                        f.write(f"DROP TABLE IF EXISTS `{table}`;\n")
+                        f.write(f"{row[1]};\n\n")
+
+                # Dump data
                 with conn.cursor() as cursor:
                     cursor.execute(f"SELECT * FROM `{table}`")
                     rows = cursor.fetchall()
                     if not rows:
                         continue
                     col_count = len(cursor.description)
-                    placeholders = ", ".join(["%s"] * col_count)
                     cols = ", ".join(f"`{d[0]}`" for d in cursor.description)
 
                     f.write(f"INSERT INTO `{table}` ({cols}) VALUES\n")
@@ -97,6 +105,7 @@ def _dump_via_pymysql(config: MySQLConfig, output_path: Path) -> Path:
                         else:
                             line += ";"
                         f.write(line + "\n")
+                    f.write("\n")
     except Exception as e:
         raise DatabaseError(f"Database dump failed: {e}") from e
 
@@ -149,12 +158,19 @@ def _import_via_pymysql(config: MySQLConfig, dump_path: Path) -> None:
 
     try:
         with conn, dump_path.open() as f:
-            sql = f.read()
             with conn.cursor() as cursor:
-                for statement in sql.split(";\n"):
-                    statement = statement.strip()
-                    if statement:
-                        cursor.execute(statement)
+                statement = ""
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("--"):
+                        continue
+                    statement += line
+                    if line.rstrip().endswith(";"):
+                        if statement.strip():
+                            cursor.execute(statement.strip())
+                        statement = ""
+                if statement.strip():
+                    cursor.execute(statement.strip())
             conn.commit()
     except Exception as e:
         raise DatabaseError(f"Database import failed: {e}") from e

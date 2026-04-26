@@ -128,3 +128,14 @@ class TestReplaceInSql:
         sql = f"INSERT INTO wp_options (option_name, option_value) VALUES ('my_option', '{serialized}');"
         result = replace_in_sql(sql, "http://oldsite.com", "https://newsite.com")
         assert 's:30:"https://newsite.com/some-page/"' in result
+
+    def test_sql_escaped_serialized_string(self):
+        sql = "INSERT INTO wp_postmeta VALUES (1,'_wp_attached_file','s:18:\\\"http://oldsite.com\\\";');"
+        result = replace_in_sql(sql, "http://oldsite.com", "https://newsite.com")
+        assert 's:19:\\"https://newsite.com\\";' in result
+        assert "http://oldsite.com" not in result
+
+    def test_sql_escaped_no_change_when_no_match(self):
+        sql = "INSERT INTO wp_postmeta VALUES (1,'_key','s:11:\\\"hello world\\\";');"
+        result = replace_in_sql(sql, "http://oldsite.com", "https://newsite.com")
+        assert result == sql
