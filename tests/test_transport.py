@@ -61,6 +61,49 @@ class TestConnect:
             connect("unknown", "host.com", 22, "user")
 
 
+class TestExecCommand:
+    def test_ssh_exec_command_runs_and_returns_stdout(self, mocker):
+        mock_ssh = mocker.patch(SSH_CLASS)
+        mock_ssh.return_value.get_transport.return_value = None
+        mock_stdout = mocker.Mock()
+        mock_stdout.channel.recv_exit_status.return_value = 0
+        mock_stdout.read.return_value = b"hello world\n"
+        mock_ssh.return_value.exec_command.return_value = (None, mock_stdout, None)
+        conn = connect(TransportProtocol.SFTP, "host.com", 22, "user", "pass")
+        result = conn.exec_command("echo hello")
+        assert result == "hello world\n"
+        mock_ssh.return_value.exec_command.assert_called_once_with("echo hello", timeout=600)
+
+    def test_ssh_exec_command_non_zero_exit_raises(self, mocker):
+        mock_ssh = mocker.patch(SSH_CLASS)
+        mock_ssh.return_value.get_transport.return_value = None
+        mock_stderr = mocker.Mock()
+        mock_stderr.read.return_value = b"command not found"
+        mock_stdout = mocker.Mock()
+        mock_stdout.channel.recv_exit_status.return_value = 127
+        mock_ssh.return_value.exec_command.return_value = (None, mock_stdout, mock_stderr)
+        conn = connect(TransportProtocol.SFTP, "host.com", 22, "user", "pass")
+        with pytest.raises(TransportError, match="127"):
+            conn.exec_command("invalid_cmd")
+
+    def test_ftp_exec_command_raises_not_implemented(self, mocker):
+        mocker.patch(FTP_CLASS)
+        conn = connect(TransportProtocol.FTP, "host.com", 21, "user", "pass")
+        with pytest.raises(NotImplementedError):
+            conn.exec_command("anything")
+
+    def test_exec_command_custom_timeout(self, mocker):
+        mock_ssh = mocker.patch(SSH_CLASS)
+        mock_ssh.return_value.get_transport.return_value = None
+        mock_stdout = mocker.Mock()
+        mock_stdout.channel.recv_exit_status.return_value = 0
+        mock_stdout.read.return_value = b"ok"
+        mock_ssh.return_value.exec_command.return_value = (None, mock_stdout, None)
+        conn = connect(TransportProtocol.SCP, "host.com", 22, "user", "pass")
+        conn.exec_command("sleep 10", timeout=30)
+        mock_ssh.return_value.exec_command.assert_called_once_with("sleep 10", timeout=30)
+
+
 class TestFtpConnection:
     def test_download(self, mocker):
         mock_ftp = mocker.patch(FTP_CLASS).return_value

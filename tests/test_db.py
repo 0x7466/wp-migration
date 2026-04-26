@@ -110,3 +110,134 @@ class TestImportSql:
         dump_path.write_text("SELECT 1;")
         with pytest.raises(DatabaseError, match="Can't connect"):
             import_sql(config, dump_path)
+
+
+class TestRemoteDumpViaSsh:
+    def test_remote_dump_runs_mysqldump_and_downloads(self, mocker):
+        mock_conn = mocker.Mock()
+        config = MySQLConfig(host="localhost", port=3306, user="root", password="secret", name="wpdb")
+        output = Path("/tmp/remote_dump_test.sql")
+
+        from wp_migration.db import remote_dump_via_ssh
+        result = remote_dump_via_ssh(mock_conn, config, output)
+
+        assert result == output
+        dump_calls = [c for c in mock_conn.exec_command.call_args_list if "mysqldump" in c[0][0]]
+        assert len(dump_calls) == 1
+        cmd = dump_calls[0][0][0]
+        assert "--host=localhost" in cmd
+        assert "--user=root" in cmd
+        assert "--password=secret" in cmd
+        assert "wpdb" in cmd
+        assert "/tmp/wp_migrate_dump_" in cmd
+        mock_conn.download.assert_called_once()
+
+    def test_remote_dump_removes_temp_on_failure(self, mocker):
+        mock_conn = mocker.Mock()
+        mock_conn.download.side_effect = Exception("Download failed")
+        config = MySQLConfig(host="localhost", port=3306, user="root", password="secret", name="wpdb")
+        output = Path("/tmp/remote_dump_fail.sql")
+
+        from wp_migration.db import remote_dump_via_ssh
+        with pytest.raises(Exception, match="Download failed"):
+            remote_dump_via_ssh(mock_conn, config, output)
+
+        cleanup_calls = [c for c in mock_conn.exec_command.call_args_list if "rm" in str(c)]
+        assert len(cleanup_calls) >= 1
+
+    def test_remote_dump_password_shell_escaped(self, mocker):
+        mock_conn = mocker.Mock()
+        config = MySQLConfig(host="localhost", port=3306, user="root", password="$pecial'\" chars", name="wpdb")
+        output = Path("/tmp/remote_dump_escape.sql")
+
+        from wp_migration.db import remote_dump_via_ssh
+        remote_dump_via_ssh(mock_conn, config, output)
+
+        dump_calls = [c for c in mock_conn.exec_command.call_args_list if "mysqldump" in c[0][0]]
+        assert len(dump_calls) == 1
+        cmd = dump_calls[0][0][0]
+        assert "$pecial" in cmd or "pecial" in cmd
+
+
+class TestRemoteDumpViaPhp:
+    def test_generates_random_filename(self, mocker):
+        mock_urlopen = mocker.patch("wp_migration.db.urllib.request.urlopen")
+        mock_urlopen.return_value.status = 200
+        mock_urlopen.return_value.read.side_effect = [b"", b""]
+        from wp_migration.db import remote_dump_via_php
+        mock_conn = mocker.Mock()
+        output = Path("/tmp/php_dump_test.sql")
+
+        result = remote_dump_via_php("https://example.com", mock_conn, "/var/www", output)
+
+        assert result == output
+        mock_conn.upload.assert_called_once()
+        uploaded_path = mock_conn.upload.call_args[0][1]
+        assert uploaded_path.startswith("/var/www/wp-migrate-dump-")
+        assert uploaded_path.endswith(".php")
+        assert len(uploaded_path) > len("/var/www/wp-migrate-dump-.php") + 10
+
+    def test_uploads_downloads_and_cleans_up(self, mocker):
+        mock_conn = mocker.Mock()
+        mock_urlopen = mocker.patch("wp_migration.db.urllib.request.urlopen")
+        mock_resp = mock_urlopen.return_value
+        mock_resp.status = 200
+        mock_resp.read.side_effect = [b"CREATE TABLE;", b""]
+        output = Path("/tmp/php_dump_test2.sql")
+
+        from wp_migration.db import remote_dump_via_php
+        remote_dump_via_php("https://example.com", mock_conn, "/var/www", output)
+
+        assert output.read_text() == "CREATE TABLE;"
+        mock_conn.delete.assert_called_once()
+
+    def test_cleans_up_on_http_failure(self, mocker):
+        mock_conn = mocker.Mock()
+        import urllib.error
+        mock_urlopen = mocker.patch("wp_migration.db.urllib.request.urlopen")
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "http://example.com", 500, "Server Error", {}, None
+        )
+        output = Path("/tmp/php_dump_fail.sql")
+
+        from wp_migration.db import remote_dump_via_php
+        with pytest.raises(Exception, match="500"):
+            remote_dump_via_php("https://example.com", mock_conn, "/var/www", output)
+
+        mock_conn.delete.assert_called_once()
+
+    def test_cleans_up_on_connection_error(self, mocker):
+        mock_conn = mocker.Mock()
+        import urllib.error
+        mock_urlopen = mocker.patch("wp_migration.db.urllib.request.urlopen")
+        mock_urlopen.side_effect = OSError("Connection error")
+        output = Path("/tmp/php_dump_conn_fail.sql")
+
+        from wp_migration.db import remote_dump_via_php
+        with pytest.raises(Exception, match="Connection error"):
+            remote_dump_via_php("https://example.com", mock_conn, "/var/www", output)
+
+        mock_conn.delete.assert_called_once()
+
+    def test_generates_valid_php(self, mocker):
+        php_content = []
+        mock_conn = mocker.Mock()
+
+        def capture_upload(local, remote):
+            php_content.append(Path(local).read_text())
+
+        mock_conn.upload.side_effect = capture_upload
+        mock_urlopen = mocker.patch("wp_migration.db.urllib.request.urlopen")
+        mock_resp = mock_urlopen.return_value
+        mock_resp.status = 200
+        mock_resp.read.side_effect = [b"", b""]
+        output = Path("/tmp/php_dump_valid_php.sql")
+
+        from wp_migration.db import remote_dump_via_php
+        remote_dump_via_php("https://example.com", mock_conn, "/var/www", output)
+
+        content = php_content[0]
+        assert "<?php" in content
+        assert "SHOW TABLES" in content
+        assert "LIMIT" in content
+        assert "unlink" in content  # self-delete

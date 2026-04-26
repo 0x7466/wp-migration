@@ -26,7 +26,7 @@ A Python CLI tool run from the admin's local machine that moves a WordPress site
 ## Core Principles
 
 - **Run from anywhere** — the tool is a local PC application, not server software. It pulls data from the source and pushes it to the target.
-- **No server-side dependencies** — no PHP helpers, no WP-CLI, no shell access needed. Just FTP/SFTP/SCP and MySQL port access.
+- **Graceful degradation** — DB unreachable locally? Falls back to remote dump via SSH, then a temporary PHP dump script. Files-only export available as explicit opt-in.
 - **Serialization-safe** — WordPress stores PHP-serialized data in the database. A naive domain replace corrupts it. The tool handles length byte adjustment.
 - **Credentials auto-detection** — source DB credentials are parsed from `wp-config.php`. Target credentials are user-supplied.
 - **Dry-run safe** — every operation supports `--dry-run`.
@@ -51,7 +51,7 @@ A Python CLI tool run from the admin's local machine that moves a WordPress site
 | What | Source | Target |
 |---|---|---|
 | Transport (host, port, user, password/key) | User-supplied (config.yaml) | User-supplied (config.yaml) |
-| MySQL (host, port, user, pass, dbname) | Parsed from `wp-config.php` | User-supplied (config.yaml) |
+| MySQL (host, port, user, pass, dbname) | Parsed from `wp-config.php` ← fallback: remote dump | User-supplied (config.yaml) |
 | WordPress URL | Auto-detected from DB options table | User-supplied or auto-detected |
 
 ### wp-config.php Discovery
@@ -65,7 +65,14 @@ If neither is found, raise an error.
 
 ### MySQL Access
 
-Both hosts must have their MySQL port (default 3306) reachable from the local machine, or an SSH tunnel must be available. The tool does not manage tunnels — that is a prerequisite handled by the user.
+Direct MySQL connection from the local machine is the primary (fastest) path. If the source DB is unreachable locally (common when MySQL is bound to localhost on the remote server), the tool falls back through consecutive layers:
+
+1. **Local dump** — mysqldump CLI or pymysql from the local machine (direct TCP to MySQL port)
+2. **Remote SSH mysqldump** — if transport is SFTP/SCP and `exec_command` is available, run `mysqldump` on the server and download the dump
+3. **PHP dump script** — upload a temporary PHP file that outputs the database via HTTP GET, download the response, then delete the script. This works even for FTP-only servers, since WordPress always has PHP + MySQL
+4. **Skip DB** — if `options.skip_db: true` is set, export proceeds with files only (no database)
+
+The target DB must always be reachable from the local machine (the tool imports into it directly).
 
 ### Transport Layer
 
@@ -81,19 +88,33 @@ TransportConnection (protocol class)
    ├── upload(local_path, remote_path) → bytes
    ├── list(remote_dir) → list[str]
    ├── delete(remote_path) → None
-   └── exists(remote_path) → bool
+   ├── exists(remote_path) → bool
+   └── exec_command(command) → str   (SSH only, raises NotImplementedError on FTP)
 ```
 
 ### DB Dump Strategy
 
 ```
-dump(creds) → dump.sql
+dump(creds, transport) → dump.sql
 
-if subprocess mysqldump available:
-    shell: mysqldump -h host -P port -u user -p pass dbname > dump.sql
-else:
-    python: pymysql.connect() → for each table: SELECT * → INSERTs → dump.sql
+Layer 1 (local):
+  if subprocess mysqldump available:
+      shell: mysqldump -h host -P port -u user -p pass dbname > dump.sql
+  else:
+      python: pymysql.connect() → for each table: SELECT * → INSERTs → dump.sql
+
+Layer 2a (remote SSH, if Layer 1 fails):
+  SSH exec: mysqldump -h host ... dbname > /tmp/dump.sql
+  SFTP download: /tmp/dump.sql → local dump.sql
+  SSH exec: rm /tmp/dump.sql
+
+Layer 2b (PHP script, if Layer 2a unavailable):
+  Upload wp-migrate-dump-<random>.php to WordPress root (alongside wp-config.php)
+  HTTP GET → pipe response to local dump.sql
+  Delete remote script
 ```
+
+Layer 2b uses WordPress's own `$wpdb` to iterate tables in chunks (500 rows per query), avoiding `memory_limit` exhaustion. The script cleans up after itself: `ob_end_clean()`, raw `Content-Type: application/sql`, and a random filename that's deleted immediately after download.
 
 Import follows the mirror pattern with `mysql` CLI preferred, `pymysql` fallback.
 
@@ -178,8 +199,9 @@ options:
   skip_plugins: false
   dry_run: false
   resume: true
+  skip_db: false           # export files only, no database dump
 ```
 
 ## Error Handling
 
-All network operations wrapped in retry logic. Failures produce structured errors with suggestions. Database dump failures are partial-recovery-safe — incomplete dumps are flagged.
+All network operations wrapped in retry logic. Failures produce structured errors with suggestions. Database dump failures cascade through fallback layers before giving up. Temporary PHP dump scripts are cleaned up in a `finally` block even if the download fails. Incomplete dumps are flagged.

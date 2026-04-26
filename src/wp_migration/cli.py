@@ -7,7 +7,7 @@ from pathlib import Path
 import click
 
 from wp_migration.config import load_config
-from wp_migration.db import dump_database, import_sql
+from wp_migration.db import dump_database, import_sql, remote_dump_via_ssh, remote_dump_via_php
 from wp_migration.files import discover_wp_content, transfer_files
 from wp_migration.replace import replace_in_sql
 from wp_migration.transport import connect, TransportProtocol
@@ -162,11 +162,15 @@ def _do_export(cfg, tmpdir, dry_run):
     db_config = _resolve_source_db_config(cfg)
     _log(f"Database: {db_config.user}@{db_config.host}:{db_config.port}/{db_config.name}")
 
-    # 2. Dump database
+    # 2. Dump database with fallbacks
     _step("Dumping source database")
-    dump_database(db_config, str(dump_path))
-    size = len(dump_path.read_text())
-    _log(f"Dumped {size:,} bytes to {dump_path.name}")
+    if cfg.options.skip_db:
+        _log("Database dump skipped (options.skip_db = true)")
+    else:
+        _dump_with_fallback(cfg, db_config, dump_path)
+        if dump_path.exists():
+            size = len(dump_path.read_text())
+            _log(f"Dumped {size:,} bytes to {dump_path.name}")
 
     # 3. Connect to source for file transfer
     _step("Connecting to source for file transfer")
@@ -204,6 +208,74 @@ def _do_export(cfg, tmpdir, dry_run):
         src_conn.close()
 
     return dump_path, staging_dir
+
+
+def _dump_with_fallback(cfg, db_config, dump_path):
+    try:
+        dump_database(db_config, str(dump_path))
+        return
+    except Exception as e:
+        _log(f"Local database dump failed: {e}")
+
+    is_ssh = cfg.source.transport in ("sftp", "scp")
+
+    # Layer 2a: remote SSH mysqldump
+    if is_ssh:
+        _log("Attempting remote mysqldump via SSH...")
+        src_conn = connect(
+            TransportProtocol(cfg.source.transport),
+            cfg.source.host,
+            cfg.source.port,
+            cfg.source.user,
+            password=cfg.source.password,
+            key_path=cfg.source.key_path,
+        )
+        try:
+            if hasattr(src_conn, "exec_command"):
+                remote_dump_via_ssh(src_conn, db_config, dump_path)
+                _log("Remote mysqldump via SSH succeeded")
+                return
+        except Exception as e2:
+            _log(f"Remote SSH dump failed: {e2}")
+        finally:
+            src_conn.close()
+
+    # Layer 2b: PHP dump script
+    site_url = cfg.source.url
+    if site_url:
+        _log("Attempting PHP dump script upload...")
+        src_conn = connect(
+            TransportProtocol(cfg.source.transport),
+            cfg.source.host,
+            cfg.source.port,
+            cfg.source.user,
+            password=cfg.source.password,
+            key_path=cfg.source.key_path,
+        )
+        try:
+            remote_dump_via_php(site_url, src_conn, cfg.source.remote_path, dump_path)
+            _log("PHP dump script succeeded")
+            return
+        except Exception as e3:
+            _log(f"PHP dump script failed: {e3}")
+        finally:
+            src_conn.close()
+
+    # All fallbacks exhausted
+    _e("Database dump failed after trying all available methods.")
+    _e("  - Direct MySQL connection: unreachable")
+    if is_ssh:
+        _e("  - Remote mysqldump via SSH: failed")
+    else:
+        _e("  - Remote mysqldump: not available (FTP transport)")
+    if site_url:
+        _e("  - PHP dump script: failed")
+    else:
+        _e("  - PHP dump script: not available (no source URL configured)")
+    _e("")
+    _e("To export files only, add to config:  options:")
+    _e("                                       skip_db: true")
+    sys.exit(1)
 
 
 def _do_import(cfg, dump_path, staging_dir, dry_run, old_url=None):

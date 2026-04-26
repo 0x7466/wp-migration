@@ -165,6 +165,27 @@ End-to-end with real MySQL in Docker. Full pipeline validated.
 | Roadmap updated with checkmarks | ✅ |
 | Resume support (checksum-based) | ✅ |
 | Exit codes (Click/sys.exit) | ✅ |
+| Root remote_path handling (no `//path`) | ✅ |
+| FTP exists: entries with/without leading `/` | ✅ |
+| Improved wp-config discovery error messages | ✅ |
+
+---
+
+## M10 — DB Unreachable Fallback (planned)
+
+When the source MySQL port is not reachable from the local machine (common when bound to localhost), the tool gracefully falls back instead of crashing.
+
+| Task | Status |
+|---|---|
+| `TransportConnection.exec_command()` on `SshConnection` | — |
+| `OptionsConfig.skip_db` config flag | — |
+| Layer 2a: Remote mysqldump via SSH exec + SFTP download | — |
+| Layer 2b: PHP dump script (upload → HTTP GET → download → delete) | — |
+| Layer 3: Files-only export when `skip_db: true` or all layers fail | — |
+| CLI fallback logic in `_do_export()` | — |
+| Tests: transport exec_command, remote dump, PHP dump, skip_db | — |
+
+**Files touched:** `transport.py`, `db.py`, `cli.py`, `config.py`, `config.example.yaml`, `tests/`
 
 ---
 
@@ -172,7 +193,7 @@ End-to-end with real MySQL in Docker. Full pipeline validated.
 
 ```
 M0  ✅ Scaffolding          (0 tests)
-M1  ✅ wp-config parser     (18 tests)
+M1  ✅ wp-config parser     (19 tests)
 M2  ✅ URL replacement      (23 tests)
 M3  ✅ Config loader        (17 tests)
 M4  ✅ Transport layer      (23 tests)
@@ -181,6 +202,7 @@ M6  ✅ File migration       (11 tests)
 M7  ✅ CLI                  (12 tests)
 M8  ✅ Integration          (1 test)
 M9  ✅ Polish               (0 tests)
+M10 — DB Fallback           (0 tests)
 
-Total: 115 tests across 8 test modules
+Total: 116 tests across 8 test modules
 ```

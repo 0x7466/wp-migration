@@ -8,6 +8,31 @@ def runner():
     return CliRunner()
 
 
+@pytest.fixture
+def sample_config(tmp_path):
+    import yaml
+    cfg = {
+        "source": {
+            "transport": "sftp",
+            "host": "old.com",
+            "user": "u",
+            "password": "p",
+            "remote_path": "/var/www",
+        },
+        "target": {
+            "transport": "ftp",
+            "host": "new.com",
+            "user": "u",
+            "password": "p",
+            "remote_path": "/www",
+        },
+    }
+    path = tmp_path / "config.yaml"
+    with open(path, "w") as f:
+        yaml.dump(cfg, f)
+    return str(path)
+
+
 def test_run_no_config_errors(runner):
     result = runner.invoke(main, ["run"])
     assert result.exit_code != 0
@@ -72,3 +97,130 @@ def test_invalid_command_shows_error(runner):
     result = runner.invoke(main, ["invalid-command"])
     assert result.exit_code != 0
     assert "No such command" in result.output
+
+
+class TestExportWithSkipDb:
+    def test_skip_db_export_succeeds(self, runner, sample_config, mocker):
+        mocker.patch("wp_migration.cli.dump_database", side_effect=Exception("Should not be called"))
+        mocker.patch("wp_migration.cli._resolve_source_db_config")
+        mock_conn = mocker.MagicMock()
+        mocker.patch("wp_migration.cli.connect", return_value=mock_conn)
+        mocker.patch("wp_migration.cli.discover_wp_content", return_value=set())
+        import yaml
+        with open(sample_config) as f:
+            cfg = yaml.safe_load(f)
+        cfg["options"] = {"skip_db": True}
+        with open(sample_config, "w") as f:
+            yaml.dump(cfg, f)
+        result = runner.invoke(main, ["export", sample_config])
+        assert result.exit_code == 0
+        assert "skip_db" in result.output or "skipped" in result.output.lower()
+
+    def test_skip_db_does_not_call_dump_database(self, runner, sample_config, mocker):
+        mocker.patch("wp_migration.cli._resolve_source_db_config")
+        mock_conn = mocker.MagicMock()
+        mocker.patch("wp_migration.cli.connect", return_value=mock_conn)
+        mocker.patch("wp_migration.cli.discover_wp_content", return_value=set())
+        dump = mocker.patch("wp_migration.cli.dump_database")
+        import yaml
+        with open(sample_config) as f:
+            cfg = yaml.safe_load(f)
+        cfg["options"] = {"skip_db": True}
+        with open(sample_config, "w") as f:
+            yaml.dump(cfg, f)
+        runner.invoke(main, ["export", sample_config])
+        dump.assert_not_called()
+
+
+class TestExportDbFallback:
+    def test_local_db_failure_triggers_remote_ssh_dump(self, runner, sample_config, mocker):
+        from wp_migration.db import DatabaseError
+        mocker.patch("wp_migration.cli._resolve_source_db_config")
+        mocker.patch("wp_migration.cli.dump_database", side_effect=DatabaseError("Can't connect"))
+        mock_conn = mocker.MagicMock()
+        mock_conn.exec_command = mocker.MagicMock()
+        mocker.patch("wp_migration.cli.connect", return_value=mock_conn)
+        mocker.patch("wp_migration.cli.discover_wp_content", return_value=set())
+        remote_dump = mocker.patch("wp_migration.cli.remote_dump_via_ssh")
+
+        result = runner.invoke(main, ["export", sample_config])
+
+        assert result.exit_code == 0
+        remote_dump.assert_called_once()
+
+    def test_ftp_fallback_to_php_dump(self, runner, tmp_path, mocker):
+        import yaml
+        from wp_migration.db import DatabaseError
+        cfg = {
+            "source": {
+                "transport": "ftp",
+                "host": "old.com",
+                "user": "u",
+                "password": "p",
+                "remote_path": "/var/www",
+                "url": "https://oldsite.com",
+            },
+            "target": {
+                "transport": "ftp",
+                "host": "new.com",
+                "user": "u",
+                "password": "p",
+                "remote_path": "/www",
+            },
+        }
+        config_path = tmp_path / "config.yaml"
+        with open(config_path, "w") as f:
+            yaml.dump(cfg, f)
+
+        mocker.patch("wp_migration.cli._resolve_source_db_config")
+        mocker.patch("wp_migration.cli.dump_database", side_effect=DatabaseError("Can't connect"))
+        mock_conn = mocker.MagicMock()
+        mocker.patch("wp_migration.cli.connect", return_value=mock_conn)
+        mocker.patch("wp_migration.cli.discover_wp_content", return_value=set())
+        php_dump = mocker.patch("wp_migration.cli.remote_dump_via_php")
+
+        result = runner.invoke(main, ["export", str(config_path)])
+        assert result.exit_code == 0
+        php_dump.assert_called_once()
+
+    def test_ssh_fallback_fails_when_no_exec_command(self, runner, sample_config, mocker):
+        from wp_migration.db import DatabaseError
+        mocker.patch("wp_migration.cli._resolve_source_db_config")
+        mocker.patch("wp_migration.cli.dump_database", side_effect=DatabaseError("Can't connect"))
+        mock_conn = mocker.MagicMock()
+        del mock_conn.exec_command  # no exec_command (simulates FTP connection class)
+        mocker.patch("wp_migration.cli.connect", return_value=mock_conn)
+        mocker.patch("wp_migration.cli.discover_wp_content", return_value=set())
+
+        result = runner.invoke(main, ["export", sample_config])
+        assert result.exit_code != 0
+        assert "skip_db" in result.output.lower() or "unreachable" in result.output.lower()
+
+    def test_all_fallbacks_fail_exits_with_error(self, runner, sample_config, mocker):
+        from wp_migration.db import DatabaseError
+        mocker.patch("wp_migration.cli._resolve_source_db_config")
+        mocker.patch("wp_migration.cli.dump_database", side_effect=DatabaseError("Can't connect"))
+        mock_conn = mocker.MagicMock()
+        mock_conn.exec_command = mocker.MagicMock()
+        mocker.patch("wp_migration.cli.connect", return_value=mock_conn)
+        mocker.patch("wp_migration.cli.discover_wp_content", return_value=set())
+        mocker.patch("wp_migration.cli.remote_dump_via_ssh", side_effect=Exception("SSH failed"))
+
+        result = runner.invoke(main, ["export", sample_config])
+        assert result.exit_code != 0
+
+    def test_skip_db_flag_in_config_skips_db_entirely(self, runner, sample_config, mocker):
+        dump = mocker.patch("wp_migration.cli.dump_database")
+        import yaml
+        with open(sample_config) as f:
+            cfg = yaml.safe_load(f)
+        cfg["options"] = {"skip_db": True}
+        with open(sample_config, "w") as f:
+            yaml.dump(cfg, f)
+        mock_conn = mocker.MagicMock()
+        mocker.patch("wp_migration.cli.connect", return_value=mock_conn)
+        mocker.patch("wp_migration.cli.discover_wp_content", return_value=set())
+
+        result = runner.invoke(main, ["export", sample_config])
+        assert result.exit_code == 0
+        dump.assert_not_called()

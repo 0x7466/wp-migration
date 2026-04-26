@@ -38,3 +38,4 @@ options:
   skip_plugins: false
   dry_run: false                # preview without making changes
   resume: true                  # skip already-transferred files by checksum
+  skip_db: false                # export files only, skip database entirely

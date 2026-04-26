@@ -66,6 +66,35 @@ class TestMigrationConfig:
         assert config.options.skip_uploads is False
         assert config.options.resume is True
 
+    def test_skip_db_option(self):
+        config = MigrationConfig(
+            source=HostConfig(transport="sftp", host="old.com", user="u", password="p", remote_path="/var/www"),
+            target=HostConfig(transport="ftp", host="new.com", user="u", password="p", remote_path="/www"),
+            options={"skip_db": True},
+        )
+        assert config.options.skip_db is True
+
+    def test_skip_db_defaults_false(self):
+        config = MigrationConfig(
+            source=HostConfig(transport="sftp", host="old.com", user="u", password="p", remote_path="/var/www"),
+            target=HostConfig(transport="ftp", host="new.com", user="u", password="p", remote_path="/www"),
+        )
+        assert config.options.skip_db is False
+
+    def test_skip_db_loaded_from_yaml(self, tmp_path):
+        yml = {
+            "source": {"transport": "sftp", "host": "old.com", "user": "u", "password": "p", "remote_path": "/var/www"},
+            "target": {"transport": "ftp", "host": "new.com", "user": "u", "password": "p", "remote_path": "/www"},
+            "options": {"skip_db": True},
+        }
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            import yaml
+            yaml.dump(yml, f)
+        from wp_migration.config import load_config
+        cfg = load_config(str(path))
+        assert cfg.options.skip_db is True
+
     def test_source_with_mysql_override(self):
         config = MigrationConfig(
             source=HostConfig(

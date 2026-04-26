@@ -62,6 +62,7 @@ class OptionsConfig:
     skip_plugins: bool = False
     dry_run: bool = False
     resume: bool = True
+    skip_db: bool = False
 
 
 @dataclasses.dataclass
@@ -112,6 +113,7 @@ def _build_options(data: dict | None) -> OptionsConfig:
         skip_plugins=data.get("skip_plugins", False),
         dry_run=data.get("dry_run", False),
         resume=data.get("resume", True),
+        skip_db=data.get("skip_db", False),
     )
 
 

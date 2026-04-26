@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import os
+import secrets
+import shlex
 import shutil
 import subprocess
 import tempfile
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Optional
 
@@ -108,6 +113,116 @@ def _dump_via_pymysql(config: MySQLConfig, output_path: Path) -> Path:
                     f.write("\n")
     except Exception as e:
         raise DatabaseError(f"Database dump failed: {e}") from e
+
+    return output_path
+
+
+def remote_dump_via_ssh(ssh_conn, config: MySQLConfig, output_path: Path) -> Path:
+    remote_temp = f"/tmp/wp_migrate_dump_{secrets.token_hex(8)}.sql"
+    cmd = (
+        f"mysqldump --host={shlex.quote(config.host)} "
+        f"--port={config.port} "
+        f"--user={shlex.quote(config.user)} "
+        f"--password={shlex.quote(config.password)} "
+        "--set-gtid-purged=OFF --single-transaction "
+        "--routines --triggers --add-drop-table "
+        f"{shlex.quote(config.name)} > {shlex.quote(remote_temp)}"
+    )
+    try:
+        ssh_conn.exec_command(cmd)
+        ssh_conn.download(remote_temp, str(output_path))
+    except Exception:
+        raise
+    finally:
+        try:
+            ssh_conn.exec_command(f"rm -f {shlex.quote(remote_temp)}")
+        except Exception:
+            pass
+    return output_path
+
+
+def remote_dump_via_php(
+    site_url: str,
+    conn,
+    remote_wp_root: str,
+    output_path: Path,
+    timeout: int = 300,
+) -> Path:
+    random_tag = secrets.token_hex(16)
+    script_name = f"wp-migrate-dump-{random_tag}.php"
+    remote_script = f"{remote_wp_root.rstrip('/')}/{script_name}"
+
+    php_code = """<?php
+define('WP_USE_THEMES', false);
+require_once __DIR__ . '/wp-load.php';
+
+while (ob_get_level()) ob_end_clean();
+header('Content-Type: application/sql; charset=utf-8');
+
+$tables = $wpdb->get_results("SHOW TABLES", ARRAY_N);
+foreach ($tables as $row) {
+    $table = current($row);
+    $create = $wpdb->get_row("SHOW CREATE TABLE `$table`", ARRAY_N);
+    echo "DROP TABLE IF EXISTS `$table`;\\n";
+    echo $create[1] . ";\\n\\n";
+
+    $offset = 0;
+    $chunk = 500;
+    do {
+        $rows = $wpdb->get_results(
+            $wpdb->prepare("SELECT * FROM `$table` LIMIT %d, %d", $offset, $chunk),
+            ARRAY_N
+        );
+        if ($rows) {
+            echo "INSERT INTO `$table` VALUES\\n";
+            $parts = array();
+            foreach ($rows as $r) {
+                $vals = array();
+                foreach ($r as $v) {
+                    $vals[] = is_null($v) ? 'NULL' : "'" . $wpdb->_real_escape($v) . "'";
+                }
+                $parts[] = '(' . implode(', ', $vals) . ')';
+            }
+            echo implode(",\\n", $parts) . ";\\n\\n";
+        }
+        $offset += $chunk;
+    } while (count($rows ?? []) === $chunk);
+}
+unlink(__FILE__);
+"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".php", delete=False) as f:
+        f.write(php_code)
+        local_script = f.name
+
+    try:
+        conn.upload(local_script, remote_script)
+        url = site_url.rstrip("/") + "/" + script_name
+        try:
+            resp = urllib.request.urlopen(url, timeout=timeout)
+            if resp.status != 200:
+                raise DatabaseError(f"PHP dump script returned HTTP {resp.status}")
+            with open(output_path, "wb") as f:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+        except urllib.error.HTTPError as e:
+            raise DatabaseError(f"PHP dump script returned HTTP {e.code}") from e
+        except OSError as e:
+            raise DatabaseError(f"PHP dump script request failed: {e}") from e
+    except Exception:
+        raise
+    finally:
+        try:
+            conn.delete(remote_script)
+        except Exception:
+            pass
+        try:
+            os.unlink(local_script)
+        except Exception:
+            pass
 
     return output_path
 

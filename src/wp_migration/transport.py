@@ -42,6 +42,9 @@ class TransportConnection:
     def exists(self, remote_path: str) -> bool:
         raise NotImplementedError
 
+    def exec_command(self, command: str, timeout: int = 600) -> str:
+        raise NotImplementedError
+
     def close(self) -> None:
         raise NotImplementedError
 
@@ -132,6 +135,14 @@ class SshConnection(TransportConnection):
             return True
         except (FileNotFoundError, OSError):
             return False
+
+    def exec_command(self, command: str, timeout: int = 600) -> str:
+        stdin, stdout, stderr = self._ssh.exec_command(command, timeout=timeout)
+        exit_status = stdout.channel.recv_exit_status()
+        if exit_status != 0:
+            err = stderr.read().decode()
+            raise TransportError(f"Remote command failed (exit {exit_status}): {err.strip()}")
+        return stdout.read().decode()
 
     def close(self) -> None:
         try:
