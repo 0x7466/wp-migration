@@ -92,7 +92,13 @@ class TestTransferFiles:
     def test_transfer_downloads_and_upload(self, tmp_path):
         source = MagicMock()
         target = MagicMock()
-        source.list.return_value = ["img.jpg"]
+
+        def list_side_effect(path):
+            if path.endswith("uploads") or path.endswith("uploads/"):
+                return ["img.jpg"]
+            raise FileNotFoundError(f"Not a directory: {path}")
+
+        source.list.side_effect = list_side_effect
 
         def fake_download(remote, local):
             Path(local).parent.mkdir(parents=True, exist_ok=True)
@@ -107,7 +113,13 @@ class TestTransferFiles:
     def test_transfer_skips_when_checksum_matches(self, tmp_path):
         source = MagicMock()
         target = MagicMock()
-        source.list.return_value = ["img.jpg"]
+
+        def list_side_effect(path):
+            if path.endswith("uploads") or path.endswith("uploads/"):
+                return ["img.jpg"]
+            raise FileNotFoundError(f"Not a directory: {path}")
+
+        source.list.side_effect = list_side_effect
         local_file = tmp_path / "uploads" / "img.jpg"
         local_file.parent.mkdir(parents=True, exist_ok=True)
         local_file.write_bytes(b"data")
@@ -120,7 +132,13 @@ class TestTransferFiles:
     def test_transfer_re_downloads_when_checksum_mismatch(self, tmp_path):
         source = MagicMock()
         target = MagicMock()
-        source.list.return_value = ["img.jpg"]
+
+        def list_side_effect(path):
+            if path.endswith("uploads") or path.endswith("uploads/"):
+                return ["img.jpg"]
+            raise FileNotFoundError(f"Not a directory: {path}")
+
+        source.list.side_effect = list_side_effect
 
         def fake_download(remote, local):
             Path(local).parent.mkdir(parents=True, exist_ok=True)
@@ -133,6 +151,12 @@ class TestTransferFiles:
     def test_transfer_empty_directory(self, tmp_path):
         source = MagicMock()
         target = MagicMock()
-        source.list.return_value = []
+
+        def list_side_effect(path):
+            if path.endswith("empty_dir") or path.endswith("empty_dir/"):
+                return []
+            raise FileNotFoundError(f"Not a directory: {path}")
+
+        source.list.side_effect = list_side_effect
         result = transfer_files(source, target, "empty_dir", str(tmp_path), {})
         assert result == {}

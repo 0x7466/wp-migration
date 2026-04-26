@@ -41,24 +41,36 @@ def _ensure_local_dir(path: str | Path) -> Path:
     return p
 
 
-def _walk_remote(conn: TransportConnection, remote_dir: str) -> list[tuple[str, str, bool]]:
-    """Recursively walk a remote directory.
-
-    Returns list of (remote_path, relative_path, is_dir).
-    """
+def _walk_remote(conn: TransportConnection, remote_dir: str, max_depth: int = 10) -> list[tuple[str, str, bool]]:
     results: list[tuple[str, str, bool]] = []
-    entries = conn.list(remote_dir)
-    for entry in entries:
-        if entry.startswith("."):
+    visited: set[str] = set()
+    stack: list[tuple[str, str, int]] = [(remote_dir, "", 0)]
+
+    while stack:
+        current_dir, current_rel, depth = stack.pop()
+        if current_dir in visited or depth > max_depth:
             continue
-        remote_path = f"{remote_dir}/{entry}"
+        visited.add(current_dir)
+
         try:
-            sub = conn.list(remote_path)
-            results.append((remote_path, entry, True))
-            for sub_path, rel, is_d in _walk_remote(conn, remote_path):
-                results.append((sub_path, f"{entry}/{rel}", is_d))
+            entries = conn.list(current_dir)
         except Exception:
-            results.append((remote_path, entry, False))
+            results.append((current_dir, current_rel, False))
+            continue
+
+        for entry in entries:
+            if entry.startswith("."):
+                continue
+            remote_path = f"{current_dir}/{entry}"
+            rel_path = f"{current_rel}/{entry}" if current_rel else entry
+
+            try:
+                sub = conn.list(remote_path)
+                results.append((remote_path, rel_path, True))
+                stack.append((remote_path, rel_path, depth + 1))
+            except Exception:
+                results.append((remote_path, rel_path, False))
+
     return results
 
 
