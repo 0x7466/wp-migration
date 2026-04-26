@@ -24,10 +24,29 @@ def parse_wp_config(php_content: str) -> dict[str, str]:
 
 def discover_wp_config(remote_path: str, conn) -> str:
     candidates = [
-        f"{remote_path.rstrip('/')}/wp-config.php",
-        f"{str(Path(remote_path).parent)}/wp-config.php",
+        remote_path.rstrip("/"),
+        str(Path(remote_path).parent),
     ]
     for candidate in candidates:
-        if conn.exists(candidate):
-            return candidate
-    raise FileNotFoundError("wp-config.php not found in remote path or parent directory")
+        if conn.exists(f"{candidate}/wp-config.php"):
+            return f"{candidate}/wp-config.php"
+
+    detail_parts = [f"  Searched: {p}/wp-config.php" for p in candidates]
+    for p in candidates:
+        try:
+            entries = conn.list(p)
+            detail_parts.append(f"  Files in {p}: {', '.join(entries[:15])}")
+            if len(entries) > 15:
+                detail_parts[-1] += f" … and {len(entries) - 15} more"
+        except Exception:
+            detail_parts.append(f"  Could not list: {p}")
+
+    raise FileNotFoundError(
+        "wp-config.php not found.\n"
+        + "\n".join(detail_parts)
+        + "\n\n  Possible causes:"
+        + "\n    - remote_path in config points to wrong directory"
+        + "\n    - WordPress files are not uploaded yet"
+        + "\n    - insufficient permissions to list files"
+        + "\n    - wp-config.php was renamed or removed"
+    )

@@ -135,6 +135,10 @@ def _resolve_source_db_config(cfg):
             password=parsed.get("DB_PASSWORD", ""),
             name=parsed.get("DB_NAME", ""),
         )
+    except FileNotFoundError:
+        _e("Could not auto-detect database credentials from source.")
+        _e("Either fix the remote_path or add a mysql_override section to your config.")
+        raise
     finally:
         conn.close()
 

@@ -148,9 +148,25 @@ class TestDiscoverWpConfig:
         class FakeConn:
             def exists(self, path):
                 return False
+            def list(self, path):
+                return ["index.php", "wp-content/"]
 
         with pytest.raises(FileNotFoundError, match="wp-config.php"):
             discover_wp_config("/var/www", FakeConn())
+
+    def test_discover_error_includes_file_listing(self):
+        class FakeConn:
+            def exists(self, path):
+                return False
+            def list(self, path):
+                return ["index.php", "wp-content/"]
+
+        with pytest.raises(FileNotFoundError) as exc:
+            discover_wp_config("/var/www", FakeConn())
+        msg = str(exc.value)
+        assert "index.php" in msg
+        assert "wp-content" in msg
+        assert "remote_path" in msg
 
     def test_discover_tries_root_first_then_parent(self):
         paths_tried = []
@@ -159,6 +175,74 @@ class TestDiscoverWpConfig:
             def exists(self, path):
                 paths_tried.append(path)
                 return False
+            def list(self, path):
+                return []
+
+        with pytest.raises(FileNotFoundError):
+            discover_wp_config("/var/www/html", FakeConn())
+
+        assert paths_tried[0] == "/var/www/html/wp-config.php"
+        assert paths_tried[1] == "/var/www/wp-config.php"
+
+    def test_discover_root_has_priority_over_parent(self):
+        class FakeConn:
+            def exists(self, path):
+                if path == "/var/www/wp-config.php":
+                    return True
+                return False
+
+        result = discover_wp_config("/var/www", FakeConn())
+        assert result == "/var/www/wp-config.php"
+
+    def test_discover_strips_trailing_slash(self):
+        class FakeConn:
+            def exists(self, path):
+                return path == "/var/www/wp-config.php"
+
+        result = discover_wp_config("/var/www/", FakeConn())
+        assert result == "/var/www/wp-config.php"
+
+    def test_discover_returns_path_when_found_in_parent(self):
+        class FakeConn:
+            def exists(self, path):
+                return path == "/var/www/wp-config.php"
+
+        result = discover_wp_config("/var/www/html", FakeConn())
+        assert result == "/var/www/wp-config.php"
+
+    def test_discover_raises_when_not_found(self):
+        class FakeConn:
+            def exists(self, path):
+                return False
+            def list(self, path):
+                return ["index.php", "wp-content/"]
+
+        with pytest.raises(FileNotFoundError, match="wp-config.php"):
+            discover_wp_config("/var/www", FakeConn())
+
+    def test_discover_error_includes_file_listing(self):
+        class FakeConn:
+            def exists(self, path):
+                return False
+            def list(self, path):
+                return ["index.php", "wp-content/"]
+
+        with pytest.raises(FileNotFoundError) as exc:
+            discover_wp_config("/var/www", FakeConn())
+        msg = str(exc.value)
+        assert "index.php" in msg
+        assert "wp-content" in msg
+        assert "remote_path" in msg
+
+    def test_discover_tries_root_first_then_parent(self):
+        paths_tried = []
+
+        class FakeConn:
+            def exists(self, path):
+                paths_tried.append(path)
+                return False
+            def list(self, path):
+                return []
 
         with pytest.raises(FileNotFoundError):
             discover_wp_config("/var/www/html", FakeConn())
