@@ -170,6 +170,7 @@ source:
   password: secret
   key_path: ~/.ssh/id_rsa  # optional
   remote_path: /var/www/wordpress
+  url: https://oldsite.com     # optional — PHP dump fallback when MySQL unreachable
   mysql_override:          # optional, auto-detected from wp-config.php
     host: db.example.com
     port: 3306
