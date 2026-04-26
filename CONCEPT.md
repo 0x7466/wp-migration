@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Python CLI tool run from the admin's local machine that moves a WordPress site between hosts. It connects to source and target hosts over FTP/SFTP/SCP for files, and directly to MySQL on both ends for the database. No server-side software required on either host — just network reachability and valid credentials.
+A Python CLI tool run from the admin's local machine that moves a WordPress site between hosts. It connects to source and target hosts over FTP/SFTP/SCP for files, and directly to MySQL on both ends for the database. No permanently-installed server-side software required — just network reachability and valid credentials. (A temporary PHP script may be uploaded as a DB dump fallback when MySQL is not reachable directly.)
 
 ```
  ┌─────────────────────────────────────────────────────────────┐
@@ -116,7 +116,7 @@ Layer 2b (PHP script, if Layer 2a unavailable):
 
 Layer 2b uses WordPress's own `$wpdb` to iterate tables in chunks (500 rows per query), avoiding `memory_limit` exhaustion. The script cleans up after itself: `ob_end_clean()`, raw `Content-Type: application/sql`, and a random filename that's deleted immediately after download.
 
-Import follows the mirror pattern with `mysql` CLI preferred, `pymysql` fallback.
+Import follows the mirror pattern with `mysql` CLI preferred, `pymysql` fallback. Both paths relax MySQL strict mode (`SET SESSION sql_mode = ''` / `--init-command`) before importing to avoid errors on `0000-00-00` default values common in WordPress schema.
 
 ### URL Replacement
 

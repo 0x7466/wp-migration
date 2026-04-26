@@ -168,22 +168,24 @@ End-to-end with real MySQL in Docker. Full pipeline validated.
 | Root remote_path handling (no `//path`) | ✅ |
 | FTP exists: entries with/without leading `/` | ✅ |
 | Improved wp-config discovery error messages | ✅ |
+| Relax SQL mode on import (MySQL 8 strict mode) | ✅ |
 
 ---
 
-## M10 — DB Unreachable Fallback (planned)
+## M10 — DB Unreachable Fallback ✅
 
 When the source MySQL port is not reachable from the local machine (common when bound to localhost), the tool gracefully falls back instead of crashing.
 
 | Task | Status |
 |---|---|
-| `TransportConnection.exec_command()` on `SshConnection` | — |
-| `OptionsConfig.skip_db` config flag | — |
-| Layer 2a: Remote mysqldump via SSH exec + SFTP download | — |
-| Layer 2b: PHP dump script (upload → HTTP GET → download → delete) | — |
-| Layer 3: Files-only export when `skip_db: true` or all layers fail | — |
-| CLI fallback logic in `_do_export()` | — |
-| Tests: transport exec_command, remote dump, PHP dump, skip_db | — |
+| `TransportConnection.exec_command()` on `SshConnection` | ✅ |
+| `OptionsConfig.skip_db` config flag | ✅ |
+| Layer 2a: Remote mysqldump via SSH exec + SFTP download | ✅ |
+| Layer 2b: PHP dump script (upload → HTTP GET → download → delete) | ✅ |
+| Layer 3: Files-only export when `skip_db: true` or all layers fail | ✅ |
+| CLI fallback logic in `_dump_with_fallback()` | ✅ |
+| Tests: transport exec_command, remote dump, PHP dump, skip_db | ✅ |
+| E2E verified with Docker WordPress containers | ✅ |
 
 **Files touched:** `transport.py`, `db.py`, `cli.py`, `config.py`, `config.example.yaml`, `tests/`
 
@@ -202,7 +204,7 @@ M6  ✅ File migration       (11 tests)
 M7  ✅ CLI                  (12 tests)
 M8  ✅ Integration          (1 test)
 M9  ✅ Polish               (0 tests)
-M10 — DB Fallback           (0 tests)
+M10 ✅ DB Fallback           (22 tests)
 
-Total: 116 tests across 8 test modules
+Total: 138 tests across 8 test modules
 ```
